@@ -7,7 +7,18 @@ const PALETTE=['#168475','#d9b46a','#588ca8','#a781a3','#d08064','#123e49','#6ba
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const db=window.supabase?.createClient(CONFIG.url,CONFIG.key,{auth:{storageKey:'school-events-auth',detectSessionInUrl:true}});
-let events=[],session=null,access=null,demo=false,currentView='dashboard',charts={},review=null,loading=false;
+let events=[],session=null,access=null,demo=false,currentView='dashboard',charts={},review=null,loading=false,contextRevision=0;
+const isOwner=()=>access?.role==='admin'&&session?.user?.email?.toLowerCase()==='zead07@hotmail.com';
+function clearPrivateViews(){
+ contextRevision++; loading=false; review=null; pendingRoster=null;
+ window.dispatchEvent(new Event('school-events-context-reset'));
+ for(const id of ['membersList','auditList','rosterPreview','pdfWorkspace','lastUpdate','toast'])$(id)?.replaceChildren();
+ for(const id of ['memberForm','reviewForm','authForm'])$(id)?.reset();
+ $('rosterFile').value='';$('rosterApply').hidden=true;$('confirmLink').value='';$('authMessage').textContent='';
+ for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
+ clearTimeout(toast.timer);$('toast').style.display='none';
+ resetEventForm();
+}
 function today(){const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bahrain',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const v=k=>p.find(x=>x.type===k).value;return `${v('year')}-${v('month')}-${v('day')}`;}
 function dateLabel(d){return d?new Intl.DateTimeFormat('ar-BH',{year:'numeric',month:'short',day:'numeric',timeZone:'Asia/Bahrain'}).format(new Date(d+'T12:00:00+03:00')):'—';}
 function shiftDate(d,n){const t=new Date(d+'T12:00:00Z');t.setUTCDate(t.getUTCDate()+n);return t.toISOString().slice(0,10);}
@@ -34,7 +45,7 @@ async function saveEvent(ev){ev.preventDefault();$('formMessage').textContent=''
  const resubmitting=id&&events.find(e=>e.id===id)?.status==='rejected';if(resubmitting){r.status='pending';r.review_note='';}
  $('saveEvent').disabled=true;try{const query=editing?db.from('school_events').update(r).eq('id',id).eq('updated_at',original.updated_at):db.from('school_events').insert(r);const {data,error}=await query.select('id');if(error)throw error;if(!data?.length)throw Error(editing?'لم يُحفظ التعديل؛ ربما غُيّرت الفعالية من جهاز آخر. حدّث السجل وحاول مجددًا.':'لم يتم حفظ السجل. تحقق من صلاحيات حسابك.');toast(resubmitting?'تم تعديل الفعالية وإعادة إرسالها للمراجعة.':id?'تم تعديل الفعالية.':'تم إرسال الفعالية للمراجعة.');resetEventForm();await loadEvents();showView('records');}catch(err){$('formMessage').textContent=errorText(err);}finally{$('saveEvent').disabled=false;}}
 function editEvent(id){const e=events.find(x=>x.id===id);if(!e||!canEdit(e))return;resetEventForm();$('eventId').value=id;if(DEPARTMENTS.includes(e.department))$('department').value=e.department;else{$('department').value='أخرى';$('otherDeptWrap').hidden=false;$('otherDepartment').value=e.department;$('otherDepartment').required=true;}for(const k of ['employee','title','place','start_date','end_date','participants','audience','notes'])$(k).value=e[k]??'';document.querySelectorAll('#slotChoices input').forEach(el=>el.checked=e.slots.includes(el.value));$('formHeading').textContent='تعديل الفعالية';$('saveEvent').textContent=e.status==='rejected'?'حفظ وإعادة إرسال للمراجعة':'حفظ التعديل';applyTeacherIdentity();showView('register');}
-async function deleteEvent(id){if(demo)return toast('الحذف غير متاح في المعاينة.');const e=events.find(x=>x.id===id);if(!e||!canDelete(e))return;return toast('الحذف النهائي غير مسموح. يلزم مسار طلب حذف واعتماد إداري مع حفظ السجل.');try{const {data,error}=await db.from('school_events').delete().eq('id',id).select('id');if(error)throw error;if(!data.length)throw Error('لم تُحذف الفعالية. تحقق من صلاحياتك.');toast('تم حذف الفعالية.');await loadEvents();}catch(err){toast(errorText(err));}}
+function deleteEvent(){toast('الحذف النهائي غير مسموح. يلزم مسار طلب حذف واعتماد إداري مع حفظ السجل.');}
 function openReview(id,status){if(demo)return toast('المعاينة لا تغيّر بيانات.');review={id,status};$('reviewHeading').textContent=status==='approved'?'اعتماد الفعالية':'رفض الفعالية';$('reviewTitle').textContent=events.find(e=>e.id===id)?.title||'';$('reviewNote').value='';$('reviewDialog').showModal();}
 async function submitReview(ev){ev.preventDefault();if(!review)return;const button=ev.submitter;button.disabled=true;try{const {data,error}=await db.from('school_events').update({status:review.status,review_note:$('reviewNote').value.trim()}).eq('id',review.id).select('id');if(error)throw error;if(!data.length)throw Error('لم يتم اعتماد القرار. تحقق من صلاحياتك.');$('reviewDialog').close();toast('تم حفظ قرار المراجعة.');await loadEvents();}catch(err){toast(errorText(err));}finally{button.disabled=false;}}
 function actionButtons(e){return `${canEdit(e)?`<button class="btn outline" data-action="edit" data-id="${e.id}">تعديل</button>`:''}${canDelete(e)?`<button class="btn outline" data-action="delete" data-id="${e.id}">حذف</button>`:''}${(demo||access?.role==='admin')&&e.status==='pending'?`<button class="btn primary" data-action="approve" data-id="${e.id}">اعتماد</button><button class="btn pdf" data-action="reject" data-id="${e.id}">رفض</button>`:''}`;}
@@ -46,26 +57,70 @@ function renderInsights(){renderReportsKpis();const list=filtered(),m=metrics(li
 function weeklyEvents(){const w=weekRange($('weekDate').value||today());return events.filter(e=>e.status==='approved'&&e.start_date<=w.end&&e.end_date>=w.start);}
 function renderWeek(){const w=weekRange($('weekDate').value||today());$('weekLabel').textContent=`الأسبوع من ${dateLabel(w.start)} إلى ${dateLabel(w.end)}`;const list=weeklyEvents();$('weekGrid').innerHTML=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس'].map((name,i)=>{const d=shiftDate(w.start,i),arr=list.filter(e=>e.start_date<=d&&e.end_date>=d);return `<div class="week-day"><h3>${name}<small style="display:block">${dateLabel(d)}</small></h3>${arr.length?arr.map(e=>`<div class="week-item"><b>${esc(e.title)}</b><small>${esc(e.place)}</small><small>${e.slots.map(esc).join('، ')}</small></div>`).join(''):'<div class="empty">لا توجد فعاليات</div>'}</div>`;}).join('');}
 function renderPending(){const p=events.filter(e=>e.status==='pending');$('pendingList').innerHTML=p.length?p.map(e=>`<div class="event-card"><div><h3>${esc(e.title)}</h3><p>${esc(e.department)} · ${esc(e.employee)} · ${dateLabel(e.start_date)}</p></div><div class="actions">${actionButtons(e)}</div></div>`).join(''):'<div class="empty">جميع الطلبات تمت مراجعتها.</div>';}
-async function loadMembers(){if(demo){$('membersList').innerHTML='<p class="muted">تُعرض الصلاحيات الفعلية بعد تسجيل الدخول.</p>';return;}if(!session||access?.role!=='admin')return;const {data,error}=await db.from('school_event_access').select('*').order('created_at');if(error)return toast(errorText(error));$('membersList').innerHTML=(data||[]).map(m=>`<div class="member-row"><b>${esc(m.display_name)}</b><small dir="ltr">${esc(m.email)}</small><span class="badge approved">${m.role==='admin'?'إدارة':'موظف'}</span>${m.role==='admin'&&m.email!=='zead07@hotmail.com'&&session?.user?.email?.toLowerCase()==='zead07@hotmail.com'?`<button type="button" class="btn outline" data-remove-admin="${esc(m.email)}">إلغاء الصلاحية الإدارية</button>`:''}</div>`).join('');}
-async function loadEvents(){if(demo){renderAll();return;}if(!session||!access)return;if(loading)return;loading=true;$('connection').textContent='جاري تحديث البيانات…';try{const all=[];for(let offset=0;;offset+=500){const {data,error}=await db.from('school_events').select('*').order('start_date',{ascending:false}).order('id').range(offset,offset+499);if(error)throw error;all.push(...data);if(data.length<500)break;}events=all;renderAll();$('connection').textContent='● متصل بقاعدة البيانات';$('lastUpdate').textContent='آخر تحديث '+new Date().toLocaleTimeString('ar-BH',{timeZone:'Asia/Bahrain',hour:'2-digit',minute:'2-digit'});await loadMembers();}catch(err){$('connection').textContent='تعذر الاتصال';toast(errorText(err));}finally{loading=false;}}
+async function loadMembers(){
+ const revision=contextRevision;
+ if(demo){$('membersList').textContent='تُعرض الصلاحيات الفعلية بعد تسجيل الدخول.';return;}
+ if(!session||access?.role!=='admin'){$('membersList').replaceChildren();return;}
+ const {data,error}=await db.from('school_event_access').select('*').order('created_at');
+ if(revision!==contextRevision)return;
+ if(error)return toast(errorText(error));
+ $('membersList').innerHTML=(data||[]).map(m=>`<div class="member-row"><b>${esc(m.display_name)}</b><small dir="ltr">${esc(m.email)}</small><span class="badge approved">${m.role==='admin'?'إدارة':'موظف'}</span>${m.role==='admin'&&m.email!=='zead07@hotmail.com'&&isOwner()?`<button type="button" class="btn outline" data-remove-admin="${esc(m.email)}">إلغاء الصلاحية الإدارية</button>`:''}</div>`).join('');
+}
+async function loadEvents(){
+ if(demo){renderAll();return;}
+ if(!session||!access||loading)return;
+ const revision=contextRevision;loading=true;$('connection').textContent='جاري تحديث البيانات…';
+ try{
+  const all=[];
+  for(let offset=0;;offset+=500){
+   const {data,error}=await db.from('school_events').select('*').order('start_date',{ascending:false}).order('id').range(offset,offset+499);
+   if(revision!==contextRevision)return;
+   if(error)throw error;all.push(...data);if(data.length<500)break;
+  }
+  events=all;renderAll();$('connection').textContent='● متصل بقاعدة البيانات';
+  $('lastUpdate').textContent='آخر تحديث '+new Date().toLocaleString('ar-BH',{timeZone:'Asia/Bahrain',dateStyle:'short',timeStyle:'short'});
+  await loadMembers();
+ }catch(err){if(revision===contextRevision){$('connection').textContent='تعذر تحديث البيانات';toast(errorText(err));}}
+ finally{if(revision===contextRevision)loading=false;}
+}
 function renderAll(){const old=$('filterDept').value;const deps=[...new Set(events.map(e=>e.department))].sort();$('filterDept').innerHTML='<option value="">جميع الأقسام</option>'+deps.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');if(deps.includes(old))$('filterDept').value=old;$('placeList').innerHTML=[...new Set(['قاعة الأنشطة','المكتبة','المسرح','الملعب','مختبر العلوم','مختبر الحاسوب','الساحة',...events.map(e=>e.place)])].map(p=>`<option value="${esc(p)}">`).join('');employeeOptions();renderDashboard();renderRecords();renderWeek();renderPending();}
-async function syncAuth(s){session=s;demo=false;access=null;events=[];if(s){const {data,error}=await db.from('school_event_access').select('*').eq('email',s.user.email.toLowerCase()).maybeSingle();if(error)toast(errorText(error));access=data;const adminOnly=$('rosterImport');if(adminOnly){adminOnly.hidden=!(s&&data?.role==='admin');adminOnly.style.display=s&&data?.role==='admin'?'':'none';}resetEventForm();if(!data)toast('حسابك مسجل، لكن الإدارة لم تمنح هذا البريد صلاحية الوصول بعد.');}$('authBtn').textContent=s?'تسجيل الخروج':'تسجيل الدخول';$('adminNav').hidden=!(s&&access?.role==='admin');$('welcomeBanner').hidden=!!access;$('demoBanner').hidden=true;$('connection').textContent=access?'● متصل بقاعدة البيانات':s?'الحساب ينتظر صلاحية الإدارة':'جاهز للبدء';$('memberForm').hidden=!(session?.user?.email?.toLowerCase()==='zead07@hotmail.com'&&access?.role==='admin');if(!access&&currentView==='admin')showView('dashboard');renderAll();if(access)await loadEvents();}
-function enableDemo(){demo=true;const titles=['أسبوع القراءة والإبداع','يوم العلوم والتجارب','البطولة الرياضية المدرسية','ورشة الأمن الرقمي','ملتقى ريادة الأعمال','مبادرة القيم الوطنية','برنامج مهارات اللغة الإنجليزية','معرض المشاريع الطلابية'];events=Array.from({length:20},(_,i)=>{const date=shiftDate('2026-10-04',i);return {id:'demo-'+i,owner_id:'demo',department:DEPARTMENTS[i%DEPARTMENTS.length],employee:'مسؤول الفعالية '+(i+1),title:titles[i%titles.length],place:['المكتبة','مختبر العلوم','الملعب','المسرح'][i%4],slots:[SLOTS[i%10]],start_date:date,end_date:shiftDate(date,i%5===0?1:0),participants:25+i*7,audience:'طلبة المرحلة الثانوية',notes:'بيانات توضيحية لتجربة الواجهة والتقارير. تعزيز مشاركة الطلبة وتنمية مهاراتهم من خلال أنشطة منظمة.',status:i%6===0?'rejected':i%4===0?'pending':'approved',review_note:'',created_at:'2026-10-03T06:00:00Z',created_at_bahrain:'2026-10-03T09:00:00'};});$('welcomeBanner').hidden=true;$('demoBanner').hidden=false;$('adminNav').hidden=!(session&&access?.role==='admin');$('connection').textContent='معاينة تجريبية';$('weekDate').value='2026-10-04';renderAll();loadMembers();}
+async function syncAuth(s){
+ session=s;demo=false;access=null;events=[];clearPrivateViews();
+ const revision=contextRevision;
+ $('authBtn').textContent=s?'تسجيل الخروج':'تسجيل الدخول';
+ $('adminNav').hidden=$('memberForm').hidden=$('rosterImport').hidden=true;
+ $('rosterImport').style.display='none';$('welcomeBanner').hidden=false;$('demoBanner').hidden=true;
+ $('connection').textContent=s?'جارٍ التحقق من صلاحيات الحساب…':'جاهز للبدء';
+ if(currentView==='admin')showView('dashboard');renderAll();
+ if(!s)return;
+ const {data,error}=await db.from('school_event_access').select('*').eq('email',s.user.email.toLowerCase()).maybeSingle();
+ if(revision!==contextRevision)return;
+ if(error)toast(errorText(error));access=data;
+ $('adminNav').hidden=!(data?.role==='admin');$('memberForm').hidden=!isOwner();
+ $('rosterImport').hidden=!(data?.role==='admin');$('rosterImport').style.display=data?.role==='admin'?'':'none';
+ $('welcomeBanner').hidden=!!access;$('connection').textContent=access?'● متصل بقاعدة البيانات':'الحساب ينتظر صلاحية الإدارة';
+ resetEventForm();
+ if(!data)toast('حسابك مسجل، لكن الإدارة لم تمنح هذا البريد صلاحية الوصول بعد.');
+ else await loadEvents();
+}
+function enableDemo(){demo=true;events=[];clearPrivateViews();const titles=['أسبوع القراءة والإبداع','يوم العلوم والتجارب','البطولة الرياضية المدرسية','ورشة الأمن الرقمي','ملتقى ريادة الأعمال','مبادرة القيم الوطنية','برنامج مهارات اللغة الإنجليزية','معرض المشاريع الطلابية'];events=Array.from({length:20},(_,i)=>{const date=shiftDate('2026-10-04',i);return {id:'demo-'+i,owner_id:'demo',department:DEPARTMENTS[i%DEPARTMENTS.length],employee:'مسؤول الفعالية '+(i+1),title:titles[i%titles.length],place:['المكتبة','مختبر العلوم','الملعب','المسرح'][i%4],slots:[SLOTS[i%10]],start_date:date,end_date:shiftDate(date,i%5===0?1:0),participants:25+i*7,audience:'طلبة المرحلة الثانوية',notes:'بيانات توضيحية لتجربة الواجهة والتقارير. تعزيز مشاركة الطلبة وتنمية مهاراتهم من خلال أنشطة منظمة.',status:i%6===0?'rejected':i%4===0?'pending':'approved',review_note:'',created_at:'2026-10-03T06:00:00Z',created_at_bahrain:'2026-10-03T09:00:00'};});$('welcomeBanner').hidden=true;$('demoBanner').hidden=false;$('adminNav').hidden=!(session&&access?.role==='admin');$('connection').textContent='معاينة تجريبية';$('weekDate').value='2026-10-04';renderAll();loadMembers();}
 async function authAction(kind){if(!db)return toast('تعذر تحميل خدمة الدخول. حدّث الصفحة.');const email=$('email').value.trim().toLowerCase(),password=$('password').value;if(!$('email').checkValidity()||password.length<8){$('authMessage').textContent='أدخل بريدًا صحيحًا وكلمة مرور من 8 أحرف على الأقل.';return;}const buttons=$('authForm').querySelectorAll('button');buttons.forEach(b=>b.disabled=true);try{const redirect=location.origin+location.pathname;const {data,error}=kind==='signup'?await db.auth.signUp({email,password,options:{emailRedirectTo:redirect}}):await db.auth.signInWithPassword({email,password});if(error)throw error;if(kind==='signup'&&!data.session)$('authMessage').textContent='تم طلب إنشاء الحساب. افتح رسالة تأكيد البريد ثم سجّل الدخول. إذا كنت مسجلًا مسبقًا، استخدم زر الدخول.';else{$('authDialog').close();await syncAuth(data.session);}}catch(err){$('authMessage').textContent=errorText(err);}finally{buttons.forEach(b=>b.disabled=false);}}
-async function verifyLink(){try{const url=new URL($('confirmLink').value);if(url.origin!==CONFIG.url)throw Error('ألصق رابط التأكيد الصادر من Supabase الخاص بهذا النظام.');const token_hash=url.searchParams.get('token')||url.searchParams.get('token_hash'),type=url.searchParams.get('type');if(!token_hash||!['signup','recovery','email'].includes(type))throw Error('رابط التأكيد غير صالح.');const {data,error}=await db.auth.verifyOtp({token_hash,type});if(error)throw error;await syncAuth(data.session);$('authMessage').textContent=type==='recovery'?'اكتب كلمة المرور الجديدة ثم اضغط حفظ كلمة المرور الجديدة.':'تم تأكيد الحساب. يمكنك إغلاق هذه النافذة.';}catch(err){$('authMessage').textContent=errorText(err);}}
+async function verifyLink(){try{const url=new URL($('confirmLink').value);if(url.origin!==CONFIG.url)throw Error('ألصق رابط التأكيد الصادر من Supabase الخاص بهذا النظام.');const token_hash=url.searchParams.get('token')||url.searchParams.get('token_hash'),type=url.searchParams.get('type');if(!token_hash||!['signup','recovery','email'].includes(type))throw Error('رابط التأكيد غير صالح.');const {data,error}=await db.auth.verifyOtp({token_hash,type});if(error)throw error;await syncAuth(data.session);if(type==='recovery')$('authDialog').showModal();$('authMessage').textContent=type==='recovery'?'اكتب كلمة المرور الجديدة ثم اضغط حفظ كلمة المرور الجديدة.':'تم تأكيد الحساب. يمكنك إغلاق هذه النافذة.';}catch(err){$('authMessage').textContent=errorText(err);}}
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>showView(b.dataset.go));$('department').innerHTML='<option value="">اختر القسم</option>'+[...DEPARTMENTS,'أخرى'].map(d=>`<option>${d}</option>`).join('');$('slotChoices').innerHTML=SLOTS.map((s,i)=>`<label class="slot"><input type="checkbox" value="${s}" id="slot${i}">${s}</label>`).join('');$('slotChoices').onchange=ev=>{if(!ev.target.checked)return;const single=['طوال اليوم','بعد الدوام الرسمي'].includes(ev.target.value);document.querySelectorAll('#slotChoices input').forEach(el=>{if(el!==ev.target&&(single||['طوال اليوم','بعد الدوام الرسمي'].includes(el.value)))el.checked=false;});};$('department').onchange=()=>{$('otherDeptWrap').hidden=$('department').value!=='أخرى';$('otherDepartment').required=!$('otherDeptWrap').hidden;employeeOptions();};$('otherDepartment').oninput=employeeOptions;$('eventForm').onsubmit=saveEvent;$('resetForm').onclick=resetEventForm;$('refresh').onclick=loadEvents;['search','filterDept','filterStatus','filterFrom','filterTo'].forEach(id=>$(id).oninput=renderRecords);$('weekDate').value=today();$('weekDate').onchange=renderWeek;
 document.body.addEventListener('click',ev=>{const b=ev.target.closest('[data-action]');if(b){const {action,id}=b.dataset;if(action==='edit')editEvent(id);if(action==='delete')deleteEvent(id);if(action==='approve')openReview(id,'approved');if(action==='reject')openReview(id,'rejected');}});$('reviewForm').onsubmit=submitReview;$('cancelReview').onclick=()=>$('reviewDialog').close();$('demoBtn').onclick=enableDemo;$('endDemo').onclick=()=>syncAuth(session);
 $('authBtn').onclick=async()=>{if(session){const {error}=await db.auth.signOut();if(error)return toast(errorText(error));await syncAuth(null);}else $('authDialog').showModal();};$('closeAuth').onclick=()=>$('authDialog').close();$('authForm').onsubmit=e=>{e.preventDefault();authAction('login');};$('signup').onclick=()=>authAction('signup');$('verifyLink').onclick=verifyLink;$('forgotPassword').onclick=async()=>{const email=$('email').value.trim();if(!$('email').checkValidity())return;$('authMessage').textContent='جاري إرسال رابط الاستعادة…';const {error}=await db.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});$('authMessage').textContent=error?errorText(error):'تم طلب رابط الاستعادة. افتحه في البريد أو ألصقه في حقل رابط التأكيد أعلاه.';};$('changePassword').onclick=async()=>{if(!session)return $('authMessage').textContent='افتح رابط الاستعادة أولًا.';const password=$('password').value;if(password.length<8)return $('authMessage').textContent='كلمة المرور من 8 أحرف على الأقل.';const {error}=await db.auth.updateUser({password});$('authMessage').textContent=error?errorText(error):'تم حفظ كلمة المرور الجديدة.';};
-$('memberForm').onsubmit=async e=>{e.preventDefault();if(!session||access?.role!=='admin'||!session?.user?.email?.toLowerCase()==='zead07@hotmail.com')return;const email=$('memberEmail').value.trim().toLowerCase(),name=$('memberName').value.trim();if(!email||!name)return; if(!confirm('منح صلاحيات الإدارة والقبول والرفض والتعديل لهذا البريد؟'))return;const {error}=await db.rpc('school_event_manage_admin',{p_email:email,p_name:name,p_action:'add'});if(error)return toast(errorText(error));$('memberForm').reset();toast('تم منح الصلاحية الإدارية');await loadMembers();};$('membersList').onclick=async e=>{const button=e.target.closest('[data-remove-admin]');if(!button||!session||access?.role!=='admin'||!session?.user?.email?.toLowerCase()==='zead07@hotmail.com')return;const email=button.dataset.removeAdmin;if(!confirm('إلغاء صلاحية الإدارة عن '+email+'؟ سيبقى حسابه موظفًا دون قبول أو رفض.'))return;button.disabled=true;const {error}=await db.rpc('school_event_manage_admin',{p_email:email,p_name:'',p_action:'remove'});if(error)toast(errorText(error));else{toast('أُلغيت الصلاحية الإدارية');await loadMembers();}button.disabled=false;};
+$('memberForm').onsubmit=async e=>{e.preventDefault();if(!session||access?.role!=='admin'||!isOwner())return;const email=$('memberEmail').value.trim().toLowerCase(),name=$('memberName').value.trim();if(!email||!name)return; if(!confirm('منح صلاحيات الإدارة والقبول والرفض والتعديل لهذا البريد؟'))return;const {error}=await db.rpc('school_event_manage_admin',{p_email:email,p_name:name,p_action:'add'});if(error)return toast(errorText(error));$('memberForm').reset();toast('تم منح الصلاحية الإدارية');await loadMembers();};$('membersList').onclick=async e=>{const button=e.target.closest('[data-remove-admin]');if(!button||!session||access?.role!=='admin'||!isOwner())return;const email=button.dataset.removeAdmin;if(!confirm('إلغاء صلاحية الإدارة عن '+email+'؟ سيبقى حسابه موظفًا دون قبول أو رفض.'))return;button.disabled=true;const {error}=await db.rpc('school_event_manage_admin',{p_email:email,p_name:'',p_action:'remove'});if(error)toast(errorText(error));else{toast('أُلغيت الصلاحية الإدارية');await loadMembers();}button.disabled=false;};
 
 let pendingRoster=null;
 $('rosterFile').onchange=async ev=>{
+ const revision=contextRevision;
  pendingRoster=null;$('rosterApply').hidden=true;$('rosterPreview').textContent='';
  if(!session||access?.role!=='admin')return toast('هذه العملية مخصصة للإدارة فقط.');
  const file=ev.target.files?.[0];if(!file)return;
  if(!/\.xlsx$/i.test(file.name)||file.size>2*1024*1024)return toast('اختر ملف XLSX لا يتجاوز 2 ميغابايت.');
  try{
   const wb=new ExcelJS.Workbook();await wb.xlsx.load(await file.arrayBuffer());
+  if(revision!==contextRevision)return;
   const ws=wb.worksheets[0];if(!ws)throw Error('ملف Excel لا يحتوي على ورقة بيانات.');
   const value=c=>{const v=c?.value;return String(typeof v==='object'?(v?.text||v?.result||''):v??'').trim();};
   const header=[1,2,3].map(i=>value(ws.getRow(1).getCell(i)));
@@ -79,6 +134,7 @@ $('rosterFile').onchange=async ev=>{
   });
   if(!rows.length)throw Error('الملف فارغ. لن يتم إيقاف حسابات بسبب ملف فارغ.');
   const {data:existing,error}=await db.from('school_event_access').select('email,role,display_name');
+  if(revision!==contextRevision)return;
   if(error)throw error;
   const adminEmails=new Set(existing.filter(x=>x.role==='admin').map(x=>x.email));
   if(rows.some(x=>adminEmails.has(x.email)))throw Error('تحتوي القائمة على حساب إداري. لا يمكن تغيير صلاحيات الإدارة من ملف المعلمين.');
@@ -88,22 +144,24 @@ $('rosterFile').onchange=async ev=>{
   pendingRoster={rows,added,removed};
   $('rosterPreview').textContent='معاينة: '+rows.length+' معلمًا | إضافة '+added.length+' | إيقاف وصول '+removed.length+'. الأقسام موجودة في Excel؛ يجب التحقق من ربطها بالخادم قبل الاعتماد النهائي.';
   $('rosterApply').hidden=false;
- }catch(err){$('rosterPreview').textContent='تعذر قراءة القائمة: '+errorText(err);}
+ }catch(err){if(revision===contextRevision)$('rosterPreview').textContent='تعذر قراءة القائمة: '+errorText(err);}
 };
 $('rosterApply').onclick=async()=>{
  if(!pendingRoster||access?.role!=='admin'||!session)return;
  const {rows,added,removed}=pendingRoster;
+ const revision=contextRevision;
+ const checkContext=()=>{if(revision!==contextRevision)throw Error('تغيّر حساب الدخول؛ أعد استيراد القائمة.');};
  if(!confirm('اعتماد قائمة Excel؟ سيُضاف '+added.length+' موظفًا ويُلغى وصول '+removed.length+' موظفًا غير موجودين بالقائمة. لا يمكن اعتبار هذا إبطالًا فوريًا لكل جلسات Supabase.'))return;
  $('rosterApply').disabled=true;
  try{
   const {error}=await db.from('school_event_access').upsert(rows.map(x=>({email:x.email,display_name:x.display_name,department:x.department,role:'staff'})),{onConflict:'email'});
-  if(error)throw error;
-  for(const member of removed){const res=await db.from('school_event_access').delete().eq('email',member.email).eq('role','staff');if(res.error)throw res.error;}
-  pendingRoster=null;$('rosterApply').hidden=true;$('rosterFile').value='';
+  checkContext();if(error)throw error;
+  for(const member of removed){checkContext();const res=await db.from('school_event_access').delete().eq('email',member.email).eq('role','staff');if(res.error)throw res.error;}
+  checkContext();pendingRoster=null;$('rosterApply').hidden=true;$('rosterFile').value='';
   $('rosterPreview').textContent='تم تحديث قائمة السماح. يتطلب إبطال الجلسات القائمة إجراءً منفصلًا على الخادم.';
   await loadMembers();
- }catch(err){toast('لم يكتمل التحديث؛ راجع القائمة قبل المحاولة: '+errorText(err));}
+ }catch(err){if(revision===contextRevision)toast('لم يكتمل التحديث؛ راجع القائمة قبل المحاولة: '+errorText(err));}
  finally{$('rosterApply').disabled=false;}
 };
 
-if(window.Chart)Chart.defaults.font.family='Cairo';resetEventForm();renderAll();if(db){db.auth.getSession().then(({data,error})=>{if(error)toast(errorText(error));syncAuth(data.session);});db.auth.onAuthStateChange((event,s)=>{if(event==='PASSWORD_RECOVERY'){session=s;$('authDialog').showModal();$('authMessage').textContent='اكتب كلمة المرور الجديدة واضغط حفظ كلمة المرور الجديدة.';}else if(event==='SIGNED_OUT')setTimeout(()=>syncAuth(null),0);});}else toast('تعذر تحميل مكتبة Supabase. تحقق من الاتصال ثم حدّث الصفحة.');
+if(window.Chart)Chart.defaults.font.family='Cairo';resetEventForm();renderAll();if(db){db.auth.getSession().then(({data,error})=>{if(error)toast(errorText(error));syncAuth(data.session);});db.auth.onAuthStateChange((event,s)=>{if(event==='PASSWORD_RECOVERY'){setTimeout(async()=>{await syncAuth(s);$('authDialog').showModal();$('authMessage').textContent='اكتب كلمة المرور الجديدة واضغط حفظ كلمة المرور الجديدة.';},0);}else if(event==='SIGNED_OUT')setTimeout(()=>syncAuth(null),0);else if(['SIGNED_IN','USER_UPDATED'].includes(event)&&s?.user?.id!==session?.user?.id)setTimeout(()=>syncAuth(s),0);});}else toast('تعذر تحميل مكتبة Supabase. تحقق من الاتصال ثم حدّث الصفحة.');

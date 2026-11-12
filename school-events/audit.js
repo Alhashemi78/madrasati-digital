@@ -3,10 +3,14 @@
 const area=document.getElementById('auditList'),button=document.getElementById('auditRefresh');
 if(!area||!button)return;
 const escapeText=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let revision=0;
+window.addEventListener('school-events-context-reset',()=>{revision++;area.replaceChildren();});
 async function refresh(){
+ const request=++revision;
  if(!session||access?.role!=='admin'||demo){area.textContent='سجل العمليات متاح للإدارة بعد تسجيل الدخول.';return;}
  area.textContent='جارٍ تحميل سجل العمليات…';
  const {data,error}=await db.from('school_event_audit').select('event_id,actor_id,operation,occurred_at,previous_record,next_record').order('occurred_at',{ascending:false}).limit(50);
+ if(request!==revision)return;
  if(error){area.textContent=errorText(error);return;}
  if(!data?.length){area.textContent='لا توجد عمليات مسجلة بعد تفعيل السجل.';return;}
  area.innerHTML=data.map(r=>{

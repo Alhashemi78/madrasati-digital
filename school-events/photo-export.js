@@ -82,6 +82,7 @@
     } finally { busy = false; button.disabled = false; syncButton(); }
   });
   document.querySelector('[data-view="documentation"]')?.addEventListener('click', syncButton);
+  window.addEventListener('school-events-context-reset',syncButton);
   new MutationObserver(syncButton).observe(document.getElementById('authBtn'), { childList:true, subtree:true, characterData:true });
   window.addEventListener('pagehide', () => { urls.forEach(url => URL.revokeObjectURL(url)); urls.clear(); });
   syncButton();

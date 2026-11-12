@@ -20,6 +20,7 @@ function reportHTML(start,end,rows,heading){
 }
 async function downloadPeriod(start,end,heading){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(start)||!/^\d{4}-\d{2}-\d{2}$/.test(end)||start>end){alert('تحقق من الفترة المحددة');return;}
+ const exportRevision=revision;
  const rows=periodEvents(start,end);
  const progress=$p('exportProgress');if(progress)progress.hidden=false;
  const host=document.createElement('div');host.style.cssText='position:fixed;left:-12000px;top:0;width:1050px;background:white;z-index:-1';host.innerHTML=reportHTML(start,end,rows,heading);document.body.appendChild(host);
@@ -37,12 +38,14 @@ async function downloadPeriod(start,end,heading){
    if(page++)pdf.addPage();
    pdf.addImage(part.toDataURL('image/jpeg',0.92),'JPEG',margin,margin,imgW,h*imgW/canvas.width);
   }
+  if(exportRevision!==revision)throw Error('تغيّر حساب الدخول؛ أعد إنشاء التقرير.');
   pdf.save('تقرير_'+start+'_إلى_'+end+'.pdf');
  }catch(e){alert('تعذر إنشاء PDF: '+e.message)}finally{host.remove();if(progress)progress.hidden=true;}
 }
 function exportButton(start,end,heading){return '<button type="button" class="btn outline periodic-generate" data-start="'+start+'" data-end="'+end+'" data-heading="'+escapeHTML(heading)+'">إنشاء PDF احترافي من البيانات</button>';}
 
-let archive=[];
+let archive=[],revision=0;
+window.addEventListener('school-events-context-reset',()=>{revision++;archive=[];display();$p('reportLinkForm').reset();$p('archiveMessage').textContent='';});
 const numeric=v=>Number(v)||0;
 const records=()=>Array.isArray(events)?events.filter(e=>e.status!=='rejected'):[];
 function periodEvents(start,end){return records().filter(e=>e.start_date<=end&&(e.end_date||e.start_date)>=start);}
@@ -61,11 +64,13 @@ function display(){
  $p('monthlyReports').innerHTML=[...months].sort().reverse().slice(0,18).map(m=>{const first=m+'-01',last=dateShift(dateShift(first,32).slice(0,7)+'-01',-1),rows=periodEvents(first,last);return '<details class="periodic-month"><summary><span>'+escapeHTML(new Intl.DateTimeFormat('ar-BH',{month:'long',year:'numeric',timeZone:'Asia/Bahrain'}).format(new Date(first+'T12:00:00Z')))+'</span><span>'+rows.length+' فعالية</span></summary>'+statsHTML(rows)+eventRows(rows)+exportButton(first,last,'تقرير شهر '+m)+archive.filter(r=>r.report_type==='monthly'&&r.period_start.slice(0,7)===m).map(row).join('')+'</details>';}).join('');
  const weeks=archive.filter(r=>r.report_type!=='monthly').sort((a,b)=>b.period_start.localeCompare(a.period_start));
  $p('weeklyArchive').innerHTML=weeks.length?weeks.map(row).join(''):'<p class="muted">لا توجد تقارير PDF مؤرشفة حتى الآن.</p>';
- $p('reportLinkAdmin').hidden=true;
+ $p('reportLinkAdmin').hidden=!(session&&access?.role==='admin'&&!demo);
 }
 async function refresh(){
+ const request=++revision;
  if(!session||!access||demo){archive=[];display();return;}
  const {data,error}=await db.from('school_event_report_archive').select('report_type,period_start,period_end,pdf_url').order('period_start',{ascending:false});
+ if(request!==revision)return;
  if(error){$p('monthlyReports').textContent=errorText(error);return;}
  archive=data||[];display();
 }

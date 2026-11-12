@@ -5,15 +5,22 @@ create table public.school_event_access (
   email text primary key check (email = lower(email)),
   role text not null default 'staff' check (role in ('admin','staff')),
   display_name text not null default '',
+  department text not null default '',
   created_at timestamptz not null default now()
 );
 alter table public.school_event_access enable row level security;
 grant select, insert, update, delete on public.school_event_access to authenticated;
+create function public.school_event_is_admin() returns boolean
+language sql stable security definer set search_path='' as $$
+ select exists(select 1 from public.school_event_access where email=lower(auth.jwt()->>'email') and role='admin');
+$$;
+revoke all on function public.school_event_is_admin() from public, anon;
+grant execute on function public.school_event_is_admin() to authenticated;
 create policy event_access_read on public.school_event_access for select to authenticated
-using (email = lower((select auth.jwt()->>'email')) or lower((select auth.jwt()->>'email')) = 'owner@example.invalid');
+using (email=lower((select auth.jwt()->>'email')) or public.school_event_is_admin());
 create policy event_access_manage on public.school_event_access for all to authenticated
-using (lower((select auth.jwt()->>'email')) = 'owner@example.invalid')
-with check (lower((select auth.jwt()->>'email')) = 'owner@example.invalid');
+using (lower((select auth.jwt()->>'email'))='owner@example.invalid' or (role='staff' and public.school_event_is_admin()))
+with check (lower((select auth.jwt()->>'email'))='owner@example.invalid' or (role='staff' and public.school_event_is_admin()));
 insert into public.school_event_access(email,role,display_name) values ('owner@example.invalid','admin','زياد الهاشمي');
 
 create table public.school_events (
@@ -36,7 +43,8 @@ create table public.school_events (
  updated_at timestamptz not null default now()
 );
 alter table public.school_events enable row level security;
-grant select, insert, update, delete on public.school_events to authenticated;
+grant select, insert, update on public.school_events to authenticated;
+revoke delete on public.school_events from public, anon, authenticated;
 create policy school_events_read on public.school_events for select to authenticated using (
  exists (select 1 from public.school_event_access where email=lower((select auth.jwt()->>'email')))
 );
@@ -52,10 +60,6 @@ create policy school_events_update on public.school_events for update to authent
  exists (select 1 from public.school_event_access where email=lower((select auth.jwt()->>'email')) and role='admin')
  or (owner_id=(select auth.uid()) and status='pending' and review_note='' and exists (
  select 1 from public.school_event_access where email=lower((select auth.jwt()->>'email'))))
-);
-create policy school_events_delete on public.school_events for delete to authenticated using (
- exists (select 1 from public.school_event_access where email=lower((select auth.jwt()->>'email')) and role='admin')
- or (owner_id=(select auth.uid()) and status='pending')
 );
 create index school_events_date_idx on public.school_events(start_date,end_date);
 create index school_events_owner_idx on public.school_events(owner_id);

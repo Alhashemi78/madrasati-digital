@@ -2,6 +2,7 @@
 const ORIGIN='https://alhashemi78.github.io';
 const headers={'Access-Control-Allow-Origin':ORIGIN,'Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS','Cache-Control':'no-store'};
 const env=(key:string)=>Deno.env.get(key)||'';
+const validId=(value:string)=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 const reply=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...headers,'Content-Type':'application/json'}});
 const cloud='uot1nayb',apiKey='282768485726168';
 const digest=async(text:string,algo='SHA-256')=>new Uint8Array(await crypto.subtle.digest(algo,new TextEncoder().encode(text)));
@@ -61,7 +62,7 @@ Deno.serve(async(req:Request)=>{
   return new Response(await image.arrayBuffer(),{headers:{...headers,'Content-Type':'application/octet-stream'}});
  }
  const form=await req.formData(),file=form.get('file'),eventId=String(form.get('event_id')||''),requestId=String(form.get('request_id')||'');
- if(!/^[0-9a-f-]{36}$/i.test(eventId)||!/^[0-9a-f-]{36}$/i.test(requestId)||!(file instanceof File)||file.type!=='image/jpeg'||!file.size||file.size>2*1024*1024)return reply({error:'صورة أو بيانات غير صالحة'},400);
+ if(!validId(eventId)||!validId(requestId)||!(file instanceof File)||file.type!=='image/jpeg'||!file.size||file.size>2*1024*1024)return reply({error:'صورة أو بيانات غير صالحة'},400);
  const bytes=new Uint8Array(await file.arrayBuffer());if(bytes[0]!==255||bytes[1]!==216||bytes[2]!==255)return reply({error:'صورة غير صالحة'},400);
  const events=await rest('school_events?id=eq.'+eventId+'&select=id,owner_id,status,start_date',{},auth);
  const e=events[0],today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Bahrain'});
@@ -72,7 +73,8 @@ Deno.serve(async(req:Request)=>{
  const prior=await rest('school_event_photos?storage_path=eq.'+encodeURIComponent(path)+'&select=storage_path',{},auth);
  if(prior.length)return reply({storage_path:path});
  const meta=await upload(file,'school_events/'+eventId+'/'+user.id+'/'+requestId);
- await rest('school_event_photos',{method:'POST',body:JSON.stringify({event_id:eventId,owner_id:user.id,storage_path:path,...meta})},auth);
+ // Authorization above uses the user's RLS. Only this verified server writes image metadata.
+ await rest('school_event_photos',{method:'POST',body:JSON.stringify({event_id:eventId,owner_id:user.id,storage_path:path,...meta})});
  return reply({storage_path:path});
  }catch(e){return reply({error:String(e.message||'تعذر إكمال الطلب')},502);}
 });
