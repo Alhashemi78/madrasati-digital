@@ -4,11 +4,11 @@
 
 ## المشروع الموجود حاليًا
 
-المستودع: `Alhashemi78/madrasati-digita`، الفرع `main`.
+المستودع: `Alhashemi78/madrasati-digital`، الفرع `main`.
 
-رابط البوابة المتوقع: https://alhashemi78.github.io/madrasati-digita/
+رابط البوابة المتوقع: https://alhashemi78.github.io/madrasati-digital/
 
-رابط الفعاليات المتوقع: https://alhashemi78.github.io/madrasati-digita/school-events/
+رابط الفعاليات المتوقع: https://alhashemi78.github.io/madrasati-digital/school-events/
 
 1. ارفع ملفات الواجهة المعدلة إلى المستودع، وتحقق من نجاح نشر GitHub Pages في صفحة Actions.
 2. من Supabase Auth > URL Configuration أضف رابط الفعاليات الجديد إلى Redirect URLs. إن كان Site URL ما زال يشير إلى المسار القديم فحدّثه. تغيّر مسار الموقع؛ أصل الموقع `https://alhashemi78.github.io` لم يتغير، لذلك لا يتطلب تغيير CORS لخدمة الصور.
